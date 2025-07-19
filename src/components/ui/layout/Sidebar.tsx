@@ -56,13 +56,13 @@ export const Sidebar = () => {
               key={item.name}
               to={item.href}
               className={cn(
-                "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 text-sm font-medium",
+                "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 text-sm font-medium transform hover:scale-105",
                 isActive
                   ? "bg-primary text-primary-foreground shadow-medium"
                   : "text-muted-foreground hover:text-foreground hover:bg-secondary"
               )}
             >
-              <item.icon className="w-5 h-5" />
+              <item.icon className="w-5 h-5 transition-transform duration-200 group-hover:rotate-6" />
               {item.name}
             </NavLink>
           );
