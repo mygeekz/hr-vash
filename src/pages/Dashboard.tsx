@@ -51,7 +51,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Welcome Section */}
-      <div className="bg-gradient-primary rounded-2xl p-8 text-primary-foreground shadow-strong">
+      <div className="bg-gradient-primary rounded-2xl p-8 text-primary-foreground shadow-strong transition-all hover:shadow-medium">
         <h1 className="text-3xl font-bold mb-2">خوش آمدید به سیستم مدیریت وش‌نیا</h1>
         <p className="text-primary-foreground/80 text-lg">
           مدیریت کارکنان، وظایف و فروش در یک مکان

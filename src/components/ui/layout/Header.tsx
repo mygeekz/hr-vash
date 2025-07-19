@@ -1,5 +1,6 @@
 import { Bell, Search, User, LogOut, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ThemeSwitcher } from '@/components/ui/ThemeSwitcher';
 import { Input } from '@/components/ui/input';
 import { 
   DropdownMenu, 
@@ -72,6 +73,7 @@ export const Header = () => {
 
         {/* Actions Section */}
         <div className="flex items-center gap-4">
+          <ThemeSwitcher />
           {/* Notifications */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
