@@ -70,9 +70,33 @@ db.serialize(() => {
         fullName      TEXT NOT NULL,
         username      TEXT UNIQUE NOT NULL,
         password      TEXT NOT NULL,
+        email         TEXT,
+        phone         TEXT,
         role          TEXT NOT NULL,
         isActive      BOOLEAN NOT NULL DEFAULT 1,
         createdAt     TEXT NOT NULL
+      )
+    `);
+
+    // جدول تنظیمات کاربر
+    db.run(`
+      CREATE TABLE IF NOT EXISTS user_settings (
+        userId TEXT PRIMARY KEY,
+        emailNotifications BOOLEAN DEFAULT 1,
+        pushNotifications BOOLEAN DEFAULT 1,
+        weeklyReports BOOLEAN DEFAULT 0,
+        theme TEXT DEFAULT 'light',
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // جدول تنظیمات پیامک
+    db.run(`
+      CREATE TABLE IF NOT EXISTS sms_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        smsUsername TEXT,
+        smsPassword TEXT,
+        smsPattern TEXT
       )
     `);
 

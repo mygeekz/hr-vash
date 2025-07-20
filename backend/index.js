@@ -42,6 +42,62 @@ app.use("/uploads", express.static(uploadDir));
 /* API ROUTES                                                         */
 /* ================================================================== */
 
+/* --------------------------------- Profile API --------------------------------- */
+app.get("/api/profile", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const sql = `SELECT id, fullName, username, email, phone, role FROM users WHERE id = ?`;
+    db.get(sql, [userId], (err, user) => {
+        if (err) return res.status(500).json({ error: "خطای داخلی سرور" });
+        if (!user) return res.status(404).json({ error: "کاربر یافت نشد" });
+        res.json(user);
+    });
+});
+
+app.patch("/api/profile", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const { fullName, email, phone } = req.body;
+
+    if (!fullName || !email) {
+        return res.status(400).json({ error: "نام و ایمیل الزامی است." });
+    }
+
+    const sql = `UPDATE users SET fullName = ?, email = ?, phone = ? WHERE id = ?`;
+    db.run(sql, [fullName, email, phone, userId], function (err) {
+        if (err) return res.status(500).json({ error: "خطا در بروزرسانی پروفایل" });
+        res.json({ message: "پروفایل با موفقیت بروزرسانی شد." });
+    });
+});
+
+/* --------------------------------- Security API --------------------------------- */
+app.patch("/api/security/change-password", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ error: "رمز عبور فعلی و جدید الزامی است." });
+    }
+
+    db.get(`SELECT password FROM users WHERE id = ?`, [userId], (err, user) => {
+        if (err || !user) return res.status(500).json({ error: "کاربر یافت نشد" });
+
+        bcrypt.compare(currentPassword, user.password, (err, isMatch) => {
+            if (err || !isMatch) {
+                return res.status(401).json({ error: "رمز عبور فعلی اشتباه است." });
+            }
+
+            bcrypt.hash(newPassword, 10, (err, hashedPassword) => {
+                if (err) return res.status(500).json({ error: "خطا در هش کردن رمز جدید" });
+
+                db.run(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, userId], function (err) {
+                    if (err) return res.status(500).json({ error: "خطا در بروزرسانی رمز عبور" });
+                    res.json({ message: "رمز عبور با موفقیت تغییر کرد." });
+                });
+            });
+        });
+    });
+});
+
+
 /* --------------------------------- Auth API --------------------------------- */
 app.post("/api/auth/login", (req, res) => {
     const { username, password } = req.body;
@@ -344,6 +400,79 @@ app.put("/api/departments/:id", (req, res) => {
 app.delete("/api/departments/:id", (req, res) => {
   db.run(`DELETE FROM departments WHERE id=?`, req.params.id, function(e) { e ? res.status(500).json({error:e.message}) : res.json({message:"Department deleted",changes:this.changes})});
 });
+
+/* --------------------------------- Settings API --------------------------------- */
+
+// Notifications
+app.get("/api/settings/notifications", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    db.get(`SELECT emailNotifications, pushNotifications, weeklyReports FROM user_settings WHERE userId = ?`, [userId], (err, settings) => {
+        if (err) return res.status(500).json({ error: "خطا در دریافت تنظیمات" });
+        res.json(settings || { emailNotifications: true, pushNotifications: true, weeklyReports: false });
+    });
+});
+
+app.patch("/api/settings/notifications", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const { emailNotifications, pushNotifications, weeklyReports } = req.body;
+    const sql = `
+        INSERT INTO user_settings (userId, emailNotifications, pushNotifications, weeklyReports)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(userId) DO UPDATE SET
+        emailNotifications = excluded.emailNotifications,
+        pushNotifications = excluded.pushNotifications,
+        weeklyReports = excluded.weeklyReports;
+    `;
+    db.run(sql, [userId, emailNotifications, pushNotifications, weeklyReports], function(err) {
+        if (err) return res.status(500).json({ error: "خطا در ذخیره تنظیمات اطلاع‌رسانی" });
+        res.json({ message: "تنظیمات اطلاع‌رسانی بروزرسانی شد." });
+    });
+});
+
+// Appearance
+app.get("/api/settings/appearance", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    db.get(`SELECT theme FROM user_settings WHERE userId = ?`, [userId], (err, settings) => {
+        if (err) return res.status(500).json({ error: "خطا در دریافت تنظیمات ظاهر" });
+        res.json(settings || { theme: 'light' });
+    });
+});
+
+app.patch("/api/settings/appearance", authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const { theme } = req.body;
+    const sql = `
+        INSERT INTO user_settings (userId, theme) VALUES (?, ?)
+        ON CONFLICT(userId) DO UPDATE SET theme = excluded.theme;
+    `;
+    db.run(sql, [userId, theme], function(err) {
+        if (err) return res.status(500).json({ error: "خطا در ذخیره تنظیمات ظاهر" });
+        res.json({ message: "تنظیمات ظاهر بروزرسانی شد." });
+    });
+});
+
+// SMS
+app.get("/api/settings/sms", authenticateToken, isAdmin, (_, res) => {
+    db.get(`SELECT smsUsername, smsPassword, smsPattern FROM sms_settings LIMIT 1`, [], (err, settings) => {
+        if (err) return res.status(500).json({ error: "خطا در دریافت تنظیمات پیامک" });
+        res.json(settings || {});
+    });
+});
+
+app.patch("/api/settings/sms", authenticateToken, isAdmin, (req, res) => {
+    const { smsUsername, smsPassword, smsPattern } = req.body;
+    // Use an UPSERT-like logic for the single row in sms_settings
+    db.run(`DELETE FROM sms_settings`, [], function(err) {
+        if (err) return res.status(500).json({ error: "خطا در بروزرسانی تنظیمات پیامک" });
+
+        const sql = `INSERT INTO sms_settings (smsUsername, smsPassword, smsPattern) VALUES (?, ?, ?)`;
+        db.run(sql, [smsUsername, smsPassword, smsPattern], function(err) {
+            if (err) return res.status(500).json({ error: "خطا در ذخیره تنظیمات پیامک" });
+            res.json({ message: "تنظیمات پیامک بروزرسانی شد." });
+        });
+    });
+});
+
 
 /* --------------------------------- Users API --------------------------------- */
 app.get("/api/users", authenticateToken, isAdmin, (_, res) => {
