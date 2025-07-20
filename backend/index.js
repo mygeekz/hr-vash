@@ -42,6 +42,31 @@ app.use("/uploads", express.static(uploadDir));
 /* API ROUTES                                                         */
 /* ================================================================== */
 
+/* --------------------------------- Auth Middleware --------------------------------- */
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (token == null) {
+        return res.sendStatus(401); // اگر توکن وجود نداشت
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.sendStatus(403); // اگر توکن نامعتبر بود
+        }
+        req.user = user;
+        next();
+    });
+};
+
+const isAdmin = (req, res, next) => {
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'دسترسی غیرمجاز. این عملیات مخصوص مدیران است.' });
+    }
+    next();
+};
+
 /* --------------------------------- Profile API --------------------------------- */
 app.get("/api/profile", authenticateToken, (req, res) => {
     const userId = req.user.id;
@@ -138,31 +163,6 @@ app.post("/api/auth/login", (req, res) => {
         });
     });
 });
-
-/* --------------------------------- Auth Middleware --------------------------------- */
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-    if (token == null) {
-        return res.sendStatus(401); // اگر توکن وجود نداشت
-    }
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.sendStatus(403); // اگر توکن نامعتبر بود
-        }
-        req.user = user;
-        next();
-    });
-};
-
-const isAdmin = (req, res, next) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'دسترسی غیرمجاز. این عملیات مخصوص مدیران است.' });
-    }
-    next();
-};
 
 
 /* --------------------------------- Employees API --------------------------------- */
