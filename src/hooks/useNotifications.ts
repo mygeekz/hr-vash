@@ -17,9 +17,20 @@ export const useNotifications = (userId: string) => {
 
   useEffect(() => {
     const fetchNotifications = async () => {
-      const initialNotifications = await notificationService.getNotifications(userId);
-      setNotifications(initialNotifications);
-      setUnreadCount(initialNotifications.filter(n => !n.isRead).length);
+      try {
+        const initialNotifications = await notificationService.getNotifications(userId);
+        if (Array.isArray(initialNotifications)) {
+          setNotifications(initialNotifications);
+          setUnreadCount(initialNotifications.filter(n => !n.isRead).length);
+        } else {
+          setNotifications([]);
+          setUnreadCount(0);
+        }
+      } catch (error) {
+        console.error("Failed to fetch notifications:", error);
+        setNotifications([]);
+        setUnreadCount(0);
+      }
     };
 
     fetchNotifications();
