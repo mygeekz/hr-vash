@@ -8,7 +8,7 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const crypto = require('crypto');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-key'; // کلید محرمانه برای JWT
@@ -166,7 +166,7 @@ app.post("/api/auth/login", (req, res) => {
 
 
 /* --------------------------------- Employees API --------------------------------- */
-app.get("/api/employees", (_, res) => {
+app.get("/api/employees", authenticateToken, (_, res) => {
   db.all(`SELECT * FROM employees ORDER BY dateJoined DESC`, [], (e, rows) =>
     e ? res.status(500).json({ error: e.message }) : res.json(rows)
   );
