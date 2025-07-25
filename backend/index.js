@@ -428,7 +428,7 @@ app.delete("/api/requests/:id", (req, res) => {
 /* ------------------------------------------------------------------ */
 
 // POST /api/sales - Create a new sales record
-app.post("/api/sales", (req, res) => {
+app.post("/api/sales", authenticateToken, (req, res) => {
   const { seller, branch, date, amount, customers } = req.body;
   if (!seller || !branch || !date || !amount) {
     return res.status(400).json({ error: "Missing required fields" });
@@ -440,6 +440,7 @@ app.post("/api/sales", (req, res) => {
       console.error("Error creating sale:", err);
       return res.status(500).json({ error: "Failed to create sales record" });
     }
+    createNotification(req.user.id, "ایجاد گزارش فروش جدید", `گزارش جدیدی برای ${seller} ثبت شد.`);
     res.status(201).json({ message: "Sales record created", id: this.lastID });
   });
 });
