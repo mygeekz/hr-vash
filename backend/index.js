@@ -46,15 +46,23 @@ try {
       customer TEXT,
       branch TEXT,
       seller TEXT,
-      amount REAL,      -- مبلغ قبل از مالیات/تخفیف
-      tax REAL,         -- مالیات
-      discount REAL,    -- تخفیف
-      total REAL,       -- مبلغ نهایی پرداختی
+      amount REAL,
+      tax REAL,
+      discount REAL,
+      total REAL,
       notes TEXT,
-      date TEXT,        -- تاریخ فاکتور (ISO: 2025-07-24 10:20:00)
-      createdAt TEXT
-    )
+      date TEXT,
+      createdAt TEXT,
+    customers INTEGER DEFAULT 0
+  )
   `);
+
+  // Ensure backward compatibility if the table existed without 'customers'
+  db.all(`PRAGMA table_info(sales)`, (err, cols) => {
+    if (!err && cols && !cols.some(c => c.name === 'customers')) {
+      db.run(`ALTER TABLE sales ADD COLUMN customers INTEGER DEFAULT 0`);
+    }
+  });
 
   db.run(`
     CREATE TABLE IF NOT EXISTS sale_items (
@@ -778,6 +786,107 @@ app.get("/api/sales", authenticateToken, (req, res) => {
   });
 });
 
+// خلاصه فروش (برای نمودار/گزارش)
+app.get("/api/sales/summary", authenticateToken, (req, res) => {
+  const { from, to, groupBy = "month" } = req.query;
+  const fmt =
+    groupBy === "day" ? "%Y-%m-%d" :
+    groupBy === "year" ? "%Y" :
+    "%Y-%m";
+
+  const where = [];
+  const params = [];
+  if (from) { where.push("date(date) >= date(?)"); params.push(from); }
+  if (to)   { where.push("date(date) <= date(?)"); params.push(to); }
+
+  const sql = `
+    SELECT strftime('${fmt}', date) AS bucket,
+           SUM(total) AS total,
+           SUM(amount) AS net,
+           SUM(tax) AS tax,
+           SUM(discount) AS discount,
+           SUM(customers) AS customers,
+           COUNT(*) AS count
+    FROM sales
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
+    GROUP BY bucket
+    ORDER BY bucket
+  `;
+  db.all(sql, params, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// داده‌های بهینه شده داشبورد فروش
+app.get("/api/sales/dashboard-data", authenticateToken, async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const month = today.slice(0, 7);
+  const run = (q, p=[]) => new Promise((resolve, reject) =>
+    db.get(q, p, (e, row) => e ? reject(e) : resolve(row || {}))
+  );
+  const all = (q, p=[]) => new Promise((resolve, reject) =>
+    db.all(q, p, (e, rows) => e ? reject(e) : resolve(rows || []))
+  );
+
+  try {
+    const todayRow = await run(
+      "SELECT IFNULL(SUM(total),0) as total, IFNULL(SUM(customers),0) as customers FROM sales WHERE date(date)=date(?)",
+      [today]
+    );
+    const monthRow = await run(
+      "SELECT IFNULL(SUM(total),0) as total, IFNULL(SUM(customers),0) as customers FROM sales WHERE strftime('%Y-%m', date)=?",
+      [month]
+    );
+    const recent = await all(
+      "SELECT date(date) as date, SUM(total) as totalSale, SUM(customers) as customers FROM sales GROUP BY date ORDER BY date DESC LIMIT 5"
+    );
+    const emp = await all(
+      "SELECT seller as name, SUM(total) as achieved FROM sales WHERE strftime('%Y-%m', date)=? GROUP BY seller ORDER BY achieved DESC",
+      [month]
+    );
+
+    const summaryCards = {
+      todaySales: todayRow.total || 0,
+      monthlySales: monthRow.total || 0,
+      todayCustomers: todayRow.customers || 0,
+      pendingReports: 0,
+    };
+
+    const target = 100000;
+    const monthlyProgress = {
+      target,
+      achieved: monthRow.total || 0,
+      percentage: target ? ((monthRow.total || 0) / target) * 100 : 0,
+    };
+
+    const recentDailyReports = recent.map(r => ({
+      id: r.date,
+      date: r.date,
+      totalSale: r.totalSale || 0,
+      customers: r.customers || 0,
+      status: "completed",
+    }));
+
+    const employeePerformance = emp.map(e => ({
+      name: e.name || "-",
+      target: 50000,
+      achieved: e.achieved || 0,
+      percentage: 50000 ? (e.achieved || 0) / 50000 * 100 : 0,
+    }));
+
+    res.json({
+      summaryCards,
+      monthlyProgress,
+      recentDailyReports,
+      employeePerformance,
+    });
+  } catch (e) {
+    console.error("dashboard-data error", e);
+    res.status(500).json({ error: "failed" });
+  }
+});
+
 // دریافت یک فروش + آیتم‌ها
 app.get("/api/sales/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
@@ -793,102 +902,44 @@ app.get("/api/sales/:id", authenticateToken, (req, res) => {
 });
 
 // ایجاد فروش جدید
-app.post("/api/sales", authenticateToken, upload.none(), (req, res) => {
-  const {
-    invoiceNo, customer, branch, seller,
-    amount = 0, tax = 0, discount = 0, total = 0,
-    notes = "", date, items = "[]"
-  } = req.body;
+app.post("/api/sales", authenticateToken, (req, res) => {
+  const { seller, branch, date, amount, customers = 0 } = req.body;
+  if (!seller || !branch || !date || amount == null) {
+    return res.status(400).json({ error: "اطلاعات ناقص است" });
+  }
 
   const id = `SALE-${Date.now()}`;
   const createdAt = new Date().toISOString();
 
   const sql = `
-    INSERT INTO sales (id, invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, createdAt)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO sales (id, invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, createdAt, customers)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   `;
+  const amt = Number(amount);
   db.run(
     sql,
-    [id, invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, createdAt],
+    [id, '', '', branch, seller, amt, 0, 0, amt, '', date, createdAt, Number(customers)],
     function (err) {
       if (err) return res.status(500).json({ error: err.message });
-
-      // ذخیره آیتم‌ها (در صورت ارسال)
-      let parsedItems = [];
-      try { parsedItems = JSON.parse(items); } catch (_) {}
-
-      if (Array.isArray(parsedItems) && parsedItems.length) {
-        const stmt = db.prepare(
-          `INSERT INTO sale_items (id, saleId, product, qty, unitPrice, total) VALUES (?,?,?,?,?,?)`
-        );
-        parsedItems.forEach((it) => {
-          stmt.run(
-            crypto.randomUUID(),
-            id,
-            it.product || "",
-            Number(it.qty || 0),
-            Number(it.unitPrice || 0),
-            Number(it.total || 0)
-          );
-        });
-        stmt.finalize();
-      }
-
-      createNotification(
-        req.user.id,
-        "ثبت فروش جدید",
-        `فروش جدید با فاکتور ${invoiceNo || id} ثبت شد.`,
-        "sale"
-      );
-
+      createNotification(req.user.id, "ثبت فروش جدید", `فروش ${id} ثبت شد.`, "sale");
       res.status(201).json({ message: "فروش ثبت شد", id });
     }
   );
 });
 
 // بروزرسانی فروش
-app.put("/api/sales/:id", authenticateToken, upload.none(), (req, res) => {
+app.put("/api/sales/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
-  const {
-    invoiceNo, customer, branch, seller,
-    amount = 0, tax = 0, discount = 0, total = 0,
-    notes = "", date, items = "[]"
-  } = req.body;
+  const { seller, branch, date, amount, customers = 0 } = req.body;
 
   const sql = `
-    UPDATE sales SET invoiceNo=?, customer=?, branch=?, seller=?, amount=?, tax=?, discount=?, total=?, notes=?, date=? WHERE id=?
+    UPDATE sales SET seller=?, branch=?, amount=?, total=?, customers=?, date=? WHERE id=?
   `;
-  const params = [invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, id];
+  const params = [seller, branch, Number(amount), Number(amount), Number(customers), date, id];
 
   db.run(sql, params, function (err) {
     if (err) return res.status(500).json({ error: err.message });
-
-    // آیتم‌ها را ساده حذف و دوباره درج می‌کنیم
-    db.run(`DELETE FROM sale_items WHERE saleId = ?`, [id], (delErr) => {
-      if (delErr) return res.status(500).json({ error: delErr.message });
-
-      let parsedItems = [];
-      try { parsedItems = JSON.parse(items); } catch (_) {}
-
-      if (Array.isArray(parsedItems) && parsedItems.length) {
-        const stmt = db.prepare(
-          `INSERT INTO sale_items (id, saleId, product, qty, unitPrice, total) VALUES (?,?,?,?,?,?)`
-        );
-        parsedItems.forEach((it) => {
-          stmt.run(
-            crypto.randomUUID(),
-            id,
-            it.product || "",
-            Number(it.qty || 0),
-            Number(it.unitPrice || 0),
-            Number(it.total || 0)
-          );
-        });
-        stmt.finalize();
-      }
-
-      res.json({ message: "فروش بروزرسانی شد", changes: this.changes });
-    });
+    res.json({ message: "فروش بروزرسانی شد", changes: this.changes });
   });
 });
 
@@ -905,37 +956,6 @@ app.delete("/api/sales/:id", authenticateToken, (req, res) => {
   });
 });
 
-// خلاصه فروش (برای نمودار/گزارش)
-app.get("/api/sales/summary", authenticateToken, (req, res) => {
-  const { from, to, groupBy = "month" } = req.query;
-  // groupBy: 'day' | 'month' | 'year'
-  const fmt =
-    groupBy === "day" ? "%Y-%m-%d" :
-    groupBy === "year" ? "%Y" :
-    "%Y-%m"; // default month
-
-  const where = [];
-  const params = [];
-  if (from) { where.push("date(date) >= date(?)"); params.push(from); }
-  if (to)   { where.push("date(date) <= date(?)"); params.push(to); }
-
-  const sql = `
-    SELECT strftime('${fmt}', date) AS bucket,
-           SUM(total)   AS total,
-           SUM(amount)  AS net,
-           SUM(tax)     AS tax,
-           SUM(discount) AS discount,
-           COUNT(*)     AS count
-    FROM sales
-    ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    GROUP BY bucket
-    ORDER BY bucket
-  `;
-  db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
 
 // خروجی اکسل فروش‌ها
 const ExcelJS = require("exceljs"); // اگر بالاتر require شده، این خط تکراری را بردار
@@ -986,7 +1006,6 @@ app.get("/api/sales/export.xlsx", authenticateToken, (req, res) => {
 });
 
 // ======================= EXPORT REQUESTS TO EXCEL =======================
-const ExcelJS = require("exceljs");
 
 app.get("/api/requests/export.xlsx", (req, res) => {
   const sql = `SELECT * FROM requests ORDER BY submissionDate DESC`;
