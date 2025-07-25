@@ -1,19 +1,13 @@
 // src/components/sales/SalesReportForm.tsx
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
+import React, { useEffect, useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import {
-  Select, SelectTrigger, SelectContent, SelectItem, SelectValue
-} from '@/components/ui/select';
-import { useToast } from '@/hooks/use-toast';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
+import { toast } from 'sonner';
 import { get, post } from '@/lib/http';
 import PersianDatePicker from '@/components/PersianDatePicker';
-import { format } from 'date-fns-jalali';
-import { formatCurrency } from '@/lib/number-to-persian'; // اگر این util ندارید، بگویید تا جایگزین دهم.
 
 type Props = {
   open: boolean;
@@ -25,213 +19,143 @@ type Employee = { id: string; fullName: string };
 type Branch = { id: string; name: string };
 
 export const SalesReportForm: React.FC<Props> = ({ open, onClose }) => {
-  const { toast } = useToast();
+  const [seller, setSeller] = useState('');
+  const [branch, setBranch] = useState('');
+  const [date, setDate] = useState<string>('');
+  const [amount, setAmount] = useState('');
+  const [customers, setCustomers] = useState('');
 
-  // ---------- فرم ----------
-  const [employeeId, setEmployeeId]         = useState('');
-  const [branchId, setBranchId]             = useState('');
-  const [reportDateISO, setReportDateISO]   = useState<string>(''); // کنترل مانند AddEmployee
-  const [amount, setAmount]                 = useState('');          // با جداکننده
-  const [customersCount, setCustomersCount] = useState('');
-
-  // ---------- لیست‌ها ----------
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [branches, setBranches]   = useState<Branch[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
 
-  const [submitting, setSubmitting]     = useState(false);
-  const [loadingLists, setLoadingLists] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // ---------- Helpers ----------
-  const resetForm = () => {
-    setEmployeeId('');
-    setBranchId('');
-    setReportDateISO('');
-    setAmount('');
-    setCustomersCount('');
-  };
-
-  const shownJalali = reportDateISO
-    ? format(new Date(reportDateISO), 'yyyy/MM/dd')
-    : '';
-
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.replace(/[^\d]/g, '');
-    const withSep = raw.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    setAmount(withSep);
-  };
-
-  const amountNumber = useMemo(
-    () => Number(amount.replace(/,/g, '')) || 0,
-    [amount]
-  );
-  const amountWords = useMemo(
-    () => (amountNumber > 0 ? formatCurrency(amountNumber) : ''),
-    [amountNumber]
-  );
-
-  // ---------- Effects ----------
   useEffect(() => {
     if (!open) return;
-    const fetchLists = async () => {
+    const fetchInitialData = async () => {
+      setLoading(true);
       try {
-        const [emps, brs] = await Promise.all([get('/employees'), get('/branches')]);
-        setEmployees(emps.map((e: any) => ({ id: e.id, fullName: e.fullName })));
-        setBranches(brs.map((b: any) => ({ id: b.id, name: b.name })));
-      } catch {
-        toast({ title: 'خطا', description: 'دریافت اطلاعات پایه شکست خورد', variant: 'destructive' });
+        const [employeesData, branchesData] = await Promise.all([
+          get('/employees'),
+          get('/branches'),
+        ]);
+        setEmployees(employeesData);
+        setBranches(branchesData);
+      } catch (error) {
+        toast.error('Failed to load initial data');
       } finally {
-        setLoadingLists(false);
+        setLoading(false);
       }
     };
-    fetchLists();
-  }, [open, toast]);
+    fetchInitialData();
+  }, [open]);
 
-  // ---------- Submit ----------
+  const resetForm = () => {
+    setSeller('');
+    setBranch('');
+    setDate('');
+    setAmount('');
+    setCustomers('');
+  };
+
   const handleSubmit = async () => {
-    if (!employeeId || !branchId || !reportDateISO || !amountNumber) {
-      toast({ title: 'خطا', description: 'فیلدهای ضروری را تکمیل کنید', variant: 'destructive' });
+    if (!seller || !branch || !date || !amount) {
+      toast.error('Please fill all required fields');
       return;
     }
 
+    setSubmitting(true);
     try {
-      setSubmitting(true);
-      const employee = employees.find((e) => e.id === employeeId);
-      const branch = branches.find((b) => b.id === branchId);
       const payload = {
-        invoiceNo: '',
-        customer: '',
-        branch: branch?.name || branchId,
-        seller: employee?.fullName || employeeId,
-        amount: amountNumber,
-        tax: 0,
-        discount: 0,
-        total: amountNumber,
-        notes: `customers:${customersCount || 0}`,
-        date: reportDateISO,
-        items: '[]',
+        seller,
+        branch,
+        date,
+        amount: Number(amount.replace(/,/g, '')),
+        customers: Number(customers),
       };
-
       await post('/sales', payload);
-
-      toast({ title: 'موفقیت', description: 'گزارش فروش ثبت شد' });
+      toast.success('Sales report submitted successfully');
       resetForm();
       onClose();
-    } catch (e: any) {
-      toast({
-        title: 'خطا',
-        description: e?.response?.data?.error || 'ثبت گزارش با مشکل روبرو شد',
-        variant: 'destructive',
-      });
+    } catch (error) {
+      toast.error('Failed to submit sales report');
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ---------- Render ----------
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) {
-          resetForm();
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-xl" dir="rtl">
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      <DialogContent className="sm:max-w-md" dir="rtl">
         <DialogHeader>
-          <DialogTitle className="text-right">ثبت گزارش فروش</DialogTitle>
+          <DialogTitle>ثبت گزارش فروش</DialogTitle>
         </DialogHeader>
-
-        {loadingLists ? (
-          <div className="py-10 text-center text-muted-foreground">در حال بارگذاری...</div>
+        {loading ? (
+          <p>Loading...</p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-right">
-            {/* employee */}
-            <div className="space-y-1">
-              <Label>نام کارمند</Label>
-              <Select value={employeeId} onValueChange={setEmployeeId}>
-                <SelectTrigger><SelectValue placeholder="انتخاب کارمند" /></SelectTrigger>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="seller">فروشنده</Label>
+              <Select value={seller} onValueChange={setSeller}>
+                <SelectTrigger>
+                  <SelectValue placeholder="انتخاب فروشنده" />
+                </SelectTrigger>
                 <SelectContent>
-                  {employees.map((e) => (
-                    <SelectItem key={e.id} value={e.id}>{e.fullName}</SelectItem>
+                  {employees.map((emp) => (
+                    <SelectItem key={emp.id} value={emp.fullName}>
+                      {emp.fullName}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
-            {/* branch */}
-            <div className="space-y-1">
-              <Label>نام شعبه</Label>
-              <Select value={branchId} onValueChange={setBranchId}>
-                <SelectTrigger><SelectValue placeholder="انتخاب شعبه" /></SelectTrigger>
+            <div className="space-y-2">
+              <Label htmlFor="branch">شعبه</Label>
+              <Select value={branch} onValueChange={setBranch}>
+                <SelectTrigger>
+                  <SelectValue placeholder="انتخاب شعبه" />
+                </SelectTrigger>
                 <SelectContent>
-                  {branches.map((b) => (
-                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                  {branches.map((br) => (
+                    <SelectItem key={br.id} value={br.name}>
+                      {br.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
-            {/* date */}
-            <div className="space-y-1">
-              <Label>تاریخ گزارش</Label>
-              <PersianDatePicker
-                value={reportDateISO}
-                onChange={setReportDateISO}
-                placeholder="انتخاب تاریخ"
-                className="w-full"
-              />
-              {shownJalali && (
-                <span className="text-xs text-muted-foreground pr-1">
-                  تاریخ انتخاب‌شده: {shownJalali}
-                </span>
-              )}
+            <div className="space-y-2">
+              <Label htmlFor="date">تاریخ</Label>
+              <PersianDatePicker value={date} onChange={setDate} />
             </div>
-
-            {/* amount */}
-            <div className="space-y-1 md:col-span-2">
-              <Label>مبلغ فروش (تومان)</Label>
+            <div className="space-y-2">
+              <Label htmlFor="amount">مبلغ</Label>
               <Input
-                inputMode="numeric"
+                id="amount"
                 value={amount}
-                onChange={handleAmountChange}
+                onChange={(e) => setAmount(e.target.value)}
                 placeholder="مثال: 1,000,000"
               />
-              {amountWords && (
-                <p className="text-xs text-muted-foreground mt-1 pr-1 leading-5">
-                  معادل حروفی: {amountWords}
-                </p>
-              )}
             </div>
-
-            {/* customers count */}
-            <div className="space-y-1 md:col-span-1">
-              <Label>تعداد مشتری</Label>
+            <div className="space-y-2">
+              <Label htmlFor="customers">تعداد مشتری</Label>
               <Input
-                inputMode="numeric"
-                value={customersCount}
-                onChange={(e) => setCustomersCount(e.target.value)}
+                id="customers"
+                type="number"
+                value={customers}
+                onChange={(e) => setCustomers(e.target.value)}
                 placeholder="مثال: 15"
               />
             </div>
-
           </div>
         )}
-
-        <DialogFooter className="mt-6 flex justify-end gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              resetForm();
-              onClose();
-            }}
-            disabled={submitting}
-          >
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
             انصراف
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting || loadingLists}>
-            {submitting ? 'در حال ثبت...' : 'ثبت گزارش'}
+          <Button onClick={handleSubmit} disabled={submitting || loading}>
+            {submitting ? 'در حال ثبت...' : 'ثبت'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -43,30 +43,13 @@ try {
 try {
   db.run(`
     CREATE TABLE IF NOT EXISTS sales (
-      id TEXT PRIMARY KEY,
-      invoiceNo TEXT,
-      customer TEXT,
-      branch TEXT,
-      seller TEXT,
-      amount REAL,
-      tax REAL,
-      discount REAL,
-      total REAL,
-      notes TEXT,
-      date TEXT,
-      createdAt TEXT
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS sale_items (
-      id TEXT PRIMARY KEY,
-      saleId TEXT,
-      product TEXT,
-      qty REAL,
-      unitPrice REAL,
-      total REAL,
-      FOREIGN KEY (saleId) REFERENCES sales(id) ON DELETE CASCADE
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      seller TEXT NOT NULL,
+      branch TEXT NOT NULL,
+      date TEXT NOT NULL,
+      amount REAL NOT NULL,
+      customers INTEGER,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
 } catch (e) {
@@ -441,170 +424,144 @@ app.delete("/api/requests/:id", (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* ------------------------- HANDLERS (for reusability) ------------- */
+/*                              Sales API                             */
 /* ------------------------------------------------------------------ */
-// ✅ Handler to create a new sale record
-const createSaleHandler = (req, res) => {
-    const {
-        invoiceNo, customer, branch, seller, amount = 0, tax = 0, discount = 0,
-        total = 0, notes = "", date, items = "[]"
-    } = req.body;
-    const id = `SALE-${Date.now()}`;
-    const createdAt = new Date().toISOString();
-    const sql = `INSERT INTO sales (id, invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, createdAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`;
-    db.run(sql, [id, invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, createdAt], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        let parsedItems = [];
-        try { parsedItems = JSON.parse(items); } catch (_) {}
-        if (Array.isArray(parsedItems) && parsedItems.length > 0) {
-            const stmt = db.prepare(`INSERT INTO sale_items (id, saleId, product, qty, unitPrice, total) VALUES (?,?,?,?,?,?)`);
-            parsedItems.forEach((it) => {
-                stmt.run(crypto.randomUUID(), id, it.product || "", Number(it.qty || 0), Number(it.unitPrice || 0), Number(it.total || 0));
-            });
-            stmt.finalize();
-        }
-        createNotification(req.user.id, "ثبت فروش جدید", `فروش جدید با فاکتور ${invoiceNo || id} ثبت شد.`, "sale");
-        res.status(201).json({ message: "فروش ثبت شد", id });
-    });
-};
 
-// ✅ Handler to get sales summary
-const getSalesSummaryHandler = (req, res) => {
-    const { from, to, groupBy = "month" } = req.query;
-    const fmt = groupBy === "day" ? "%Y-%m-%d" : groupBy === "year" ? "%Y" : "%Y-%m";
-    const where = [];
-    const params = [];
-    if (from) { where.push("date(date) >= date(?)"); params.push(from); }
-    if (to) { where.push("date(date) <= date(?)"); params.push(to); }
-    const sql = `
-        SELECT strftime('${fmt}', date) AS bucket,
-               SUM(total) AS total, SUM(amount) AS net, SUM(tax) AS tax,
-               SUM(discount) AS discount, COUNT(*) AS count
-        FROM sales
-        ${where.length ? "WHERE " + where.join(" AND ") : ""}
-        GROUP BY bucket ORDER BY bucket
-    `;
-    db.all(sql, params, (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows);
-    });
-};
+// POST /api/sales - Create a new sales record
+app.post("/api/sales", (req, res) => {
+  const { seller, branch, date, amount, customers } = req.body;
+  if (!seller || !branch || !date || !amount) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
 
-/* --------------------------------- Sales API --------------------------------- */
-// ✅ Route order is important. Specific routes like /summary must come before dynamic routes like /:id.
-app.get("/api/sales/summary", authenticateToken, getSalesSummaryHandler);
-
-app.get("/api/sales/export.xlsx", authenticateToken, (req, res) => {
-  const { from, to, branch } = req.query;
-  const where = [], params = [];
-  if (from) { where.push("date(date) >= date(?)"); params.push(from); }
-  if (to) { where.push("date(date) <= date(?)"); params.push(to); }
-  if (branch) { where.push("branch = ?"); params.push(branch); }
-  const sql = `SELECT * FROM sales ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY date DESC`;
-  db.all(sql, params, async (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Sales");
-    ws.columns = [
-        { header: "کد", key: "id", width: 20 }, { header: "شماره فاکتور", key: "invoiceNo", width: 16 },
-        { header: "مشتری", key: "customer", width: 24 }, { header: "شعبه", key: "branch", width: 16 },
-        { header: "فروشنده", key: "seller", width: 18 }, { header: "مبلغ", key: "amount", width: 14 },
-        { header: "مالیات", key: "tax", width: 12 }, { header: "تخفیف", key: "discount", width: 12 },
-        { header: "جمع کل", key: "total", width: 14 }, { header: "تاریخ", key: "date", width: 22 },
-        { header: "توضیحات", key: "notes", width: 40 },
-    ];
-    rows.forEach((r) => ws.addRow(r));
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", 'attachment; filename="sales.xlsx"');
-    await wb.xlsx.write(res);
-    res.end();
+  const sql = `INSERT INTO sales (seller, branch, date, amount, customers) VALUES (?, ?, ?, ?, ?)`;
+  db.run(sql, [seller, branch, date, amount, customers], function (err) {
+    if (err) {
+      console.error("Error creating sale:", err);
+      return res.status(500).json({ error: "Failed to create sales record" });
+    }
+    res.status(201).json({ message: "Sales record created", id: this.lastID });
   });
 });
 
-app.get("/api/sales", authenticateToken, (req, res) => {
-  const { from, to, branch, seller } = req.query;
-  const where = [], params = [];
-  if (from)   { where.push("date(date) >= date(?)"); params.push(from); }
-  if (to)     { where.push("date(date) <= date(?)"); params.push(to); }
-  if (branch) { where.push("branch = ?"); params.push(branch); }
-  if (seller) { where.push("seller = ?"); params.push(seller); }
-  const sql = `SELECT * FROM sales ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY date DESC`;
+// GET /api/sales - Retrieve all sales records with filtering
+app.get("/api/sales", (req, res) => {
+  const { from, to, seller, branch } = req.query;
+  let sql = "SELECT * FROM sales";
+  const where = [];
+  const params = [];
+
+  if (from) {
+    where.push("date >= ?");
+    params.push(from);
+  }
+  if (to) {
+    where.push("date <= ?");
+    params.push(to);
+  }
+  if (seller) {
+    where.push("seller = ?");
+    params.push(seller);
+  }
+  if (branch) {
+    where.push("branch = ?");
+    params.push(branch);
+  }
+
+  if (where.length > 0) {
+    sql += " WHERE " + where.join(" AND ");
+  }
+
+  sql += " ORDER BY date DESC";
+
   db.all(sql, params, (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
     res.json(rows);
   });
 });
 
-app.post("/api/sales/reports", authenticateToken, (req, res) => {
-  const { employeeId, branchId, reportDate, amount, customersCount } = req.body;
-  if (!employeeId || !branchId || !reportDate || !amount) {
-    return res.status(400).json({ error: "اطلاعات ناقص" });
+// GET /api/sales/summary - Get aggregated sales data
+app.get("/api/sales/summary", (req, res) => {
+  const { groupBy = "month", from, to } = req.query;
+  const format = {
+    day: "%Y-%m-%d",
+    week: "%Y-%W",
+    month: "%Y-%m",
+    year: "%Y",
+  }[groupBy];
+
+  if (!format) {
+    return res.status(400).json({ error: "Invalid groupBy value" });
   }
-  db.get(`SELECT fullName FROM employees WHERE id = ?`, [employeeId], (eEmp, emp) => {
-    if (eEmp) return res.status(500).json({ error: eEmp.message });
-    db.get(`SELECT name FROM branches WHERE id = ?`, [branchId], (eBr, br) => {
-      if (eBr) return res.status(500).json({ error: eBr.message });
-      req.body = {
-        invoiceNo: "",
-        customer: "",
-        branch: br ? br.name : branchId,
-        seller: emp ? emp.fullName : employeeId,
-        amount: Number(amount),
-        tax: 0,
-        discount: 0,
-        total: Number(amount),
-        notes: `customers:${customersCount || 0}`,
-        date: reportDate,
-        items: "[]",
-      };
-      createSaleHandler(req, res);
-    });
+
+  let sql = `SELECT strftime(?, date) as bucket, SUM(amount) as total FROM sales`;
+  const params = [format];
+  const where = [];
+
+  if (from) {
+    where.push("date >= ?");
+    params.push(from);
+  }
+  if (to) {
+    where.push("date <= ?");
+    params.push(to);
+  }
+
+  if (where.length > 0) {
+    sql += " WHERE " + where.join(" AND ");
+  }
+
+  sql += " GROUP BY bucket ORDER BY bucket";
+
+  db.all(sql, params, (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(rows);
   });
 });
 
-app.get("/api/sales/:id", authenticateToken, (req, res) => {
-  const { id } = req.params;
-  db.get(`SELECT * FROM sales WHERE id = ?`, [id], (err, sale) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!sale) return res.status(404).json({ error: "فروش یافت نشد" });
-    db.all(`SELECT * FROM sale_items WHERE saleId = ?`, [id], (e2, items) => {
-      if (e2) return res.status(500).json({ error: e2.message });
-      res.json({ ...sale, items });
-    });
-  });
+// GET /api/sales/dashboard-data - Get all data for the dashboard
+app.get("/api/sales/dashboard-data", (_, res) => {
+  // This is a placeholder implementation.
+  // In a real application, you would fetch this data from the database.
+  const dashboardData = {
+    summaryCards: {
+      todaySales: 1500,
+      monthlySales: 45000,
+      todayCustomers: 12,
+      pendingReports: 3,
+    },
+    monthlyProgress: {
+      target: 100000,
+      achieved: 45000,
+      percentage: 45.0,
+    },
+    recentDailyReports: [
+      { id: "1", date: "1404/05/03", totalSale: 2500, customers: 8, status: "completed" },
+      { id: "2", date: "1404/05/02", totalSale: 1200, customers: 5, status: "pending" },
+    ],
+    employeePerformance: [
+      { name: "بهزاد خلیلی", target: 50000, achieved: 25000, percentage: 50.0 },
+      { name: "کاربر دیگر", target: 50000, achieved: 20000, percentage: 40.0 },
+    ],
+  };
+  res.json(dashboardData);
 });
 
-app.post("/api/sales", authenticateToken, upload.none(), createSaleHandler);
-
-app.put("/api/sales/:id", authenticateToken, upload.none(), (req, res) => {
+// DELETE /api/sales/:id - Delete a sales record
+app.delete("/api/sales/:id", (req, res) => {
   const { id } = req.params;
-  const { invoiceNo, customer, branch, seller, amount = 0, tax = 0, discount = 0, total = 0, notes = "", date, items = "[]" } = req.body;
-  const sql = `UPDATE sales SET invoiceNo=?, customer=?, branch=?, seller=?, amount=?, tax=?, discount=?, total=?, notes=?, date=? WHERE id=?`;
-  const params = [invoiceNo, customer, branch, seller, amount, tax, discount, total, notes, date, id];
-  db.run(sql, params, function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    db.run(`DELETE FROM sale_items WHERE saleId = ?`, [id], (delErr) => {
-      if (delErr) return res.status(500).json({ error: delErr.message });
-      let parsedItems = [];
-      try { parsedItems = JSON.parse(items); } catch (_) {}
-      if (Array.isArray(parsedItems) && parsedItems.length) {
-        const stmt = db.prepare(`INSERT INTO sale_items (id, saleId, product, qty, unitPrice, total) VALUES (?,?,?,?,?,?)`);
-        parsedItems.forEach((it) => {
-          stmt.run(crypto.randomUUID(), id, it.product || "", Number(it.qty || 0), Number(it.unitPrice || 0), Number(it.total || 0));
-        });
-        stmt.finalize();
-      }
-      res.json({ message: "فروش بروزرسانی شد", changes: this.changes });
-    });
-  });
-});
-
-app.delete("/api/sales/:id", authenticateToken, (req, res) => {
-  const { id } = req.params;
-  // ✅ The first db.run was removed because `ON DELETE CASCADE` in the table schema handles this automatically.
-  db.run(`DELETE FROM sales WHERE id = ?`, [id], function (err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ message: "فروش حذف شد", changes: this.changes });
+  db.run("DELETE FROM sales WHERE id = ?", [id], function (err) {
+    if (err) {
+      return res.status(500).json({ error: "Failed to delete sales record" });
+    }
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Sales record not found" });
+    }
+    res.status(200).json({ message: "Sales record deleted successfully" });
   });
 });
 
