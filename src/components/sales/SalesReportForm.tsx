@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import {
   Select, SelectTrigger, SelectContent, SelectItem, SelectValue
 } from '@/components/ui/select';
-import { Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { get, post } from '@/lib/http';
 import PersianDatePicker from '@/components/PersianDatePicker';
@@ -34,7 +33,6 @@ export const SalesReportForm: React.FC<Props> = ({ open, onClose }) => {
   const [reportDateISO, setReportDateISO]   = useState<string>(''); // کنترل مانند AddEmployee
   const [amount, setAmount]                 = useState('');          // با جداکننده
   const [customersCount, setCustomersCount] = useState('');
-  const [file, setFile]                     = useState<File | null>(null);
 
   // ---------- لیست‌ها ----------
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -50,7 +48,6 @@ export const SalesReportForm: React.FC<Props> = ({ open, onClose }) => {
     setReportDateISO('');
     setAmount('');
     setCustomersCount('');
-    setFile(null);
   };
 
   const shownJalali = reportDateISO
@@ -98,15 +95,23 @@ export const SalesReportForm: React.FC<Props> = ({ open, onClose }) => {
 
     try {
       setSubmitting(true);
-      const formData = new FormData();
-      formData.append('employeeId', employeeId);
-      formData.append('branchId', branchId);
-      formData.append('reportDate', reportDateISO); // ISO
-      formData.append('amount', String(amountNumber));
-      formData.append('customersCount', customersCount || '0');
-      if (file) formData.append('attachment', file);
+      const employee = employees.find((e) => e.id === employeeId);
+      const branch = branches.find((b) => b.id === branchId);
+      const payload = {
+        invoiceNo: '',
+        customer: '',
+        branch: branch?.name || branchId,
+        seller: employee?.fullName || employeeId,
+        amount: amountNumber,
+        tax: 0,
+        discount: 0,
+        total: amountNumber,
+        notes: `customers:${customersCount || 0}`,
+        date: reportDateISO,
+        items: '[]',
+      };
 
-      await post('/sales/reports', formData, 'POST', undefined, true);
+      await post('/sales', payload);
 
       toast({ title: 'موفقیت', description: 'گزارش فروش ثبت شد' });
       resetForm();
@@ -124,7 +129,15 @@ export const SalesReportForm: React.FC<Props> = ({ open, onClose }) => {
 
   // ---------- Render ----------
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          resetForm();
+          onClose();
+        }
+      }}
+    >
       <DialogContent className="sm:max-w-xl" dir="rtl">
         <DialogHeader>
           <DialogTitle className="text-right">ثبت گزارش فروش</DialogTitle>
@@ -203,20 +216,20 @@ export const SalesReportForm: React.FC<Props> = ({ open, onClose }) => {
               />
             </div>
 
-            {/* file */}
-            <div className="space-y-1 md:col-span-2">
-              <Label>بارگذاری فایل گزارش (اختیاری)</Label>
-              <Input
-                type="file"
-                accept=".pdf,.jpg,.png,.xlsx,.xls"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-              />
-            </div>
           </div>
         )}
 
         <DialogFooter className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose} disabled={submitting}>انصراف</Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              resetForm();
+              onClose();
+            }}
+            disabled={submitting}
+          >
+            انصراف
+          </Button>
           <Button onClick={handleSubmit} disabled={submitting || loadingLists}>
             {submitting ? 'در حال ثبت...' : 'ثبت گزارش'}
           </Button>

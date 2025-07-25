@@ -535,6 +535,33 @@ app.get("/api/sales", authenticateToken, (req, res) => {
   });
 });
 
+app.post("/api/sales/reports", authenticateToken, (req, res) => {
+  const { employeeId, branchId, reportDate, amount, customersCount } = req.body;
+  if (!employeeId || !branchId || !reportDate || !amount) {
+    return res.status(400).json({ error: "اطلاعات ناقص" });
+  }
+  db.get(`SELECT fullName FROM employees WHERE id = ?`, [employeeId], (eEmp, emp) => {
+    if (eEmp) return res.status(500).json({ error: eEmp.message });
+    db.get(`SELECT name FROM branches WHERE id = ?`, [branchId], (eBr, br) => {
+      if (eBr) return res.status(500).json({ error: eBr.message });
+      req.body = {
+        invoiceNo: "",
+        customer: "",
+        branch: br ? br.name : branchId,
+        seller: emp ? emp.fullName : employeeId,
+        amount: Number(amount),
+        tax: 0,
+        discount: 0,
+        total: Number(amount),
+        notes: `customers:${customersCount || 0}`,
+        date: reportDate,
+        items: "[]",
+      };
+      createSaleHandler(req, res);
+    });
+  });
+});
+
 app.get("/api/sales/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
   db.get(`SELECT * FROM sales WHERE id = ?`, [id], (err, sale) => {
